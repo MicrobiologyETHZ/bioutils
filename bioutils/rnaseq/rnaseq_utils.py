@@ -5,6 +5,7 @@ import sys
 import plotly.express as px
 import pyranges as pr
 import numpy as np
+from sklearn.decomposition import PCA
 
 class GenomeAnnot:
     genome_map = {'CP015399.2': 'YL32',
@@ -219,6 +220,37 @@ class SushiCounts(CountDataSet):
         # self.count_data["genome"] = self.count_data['Chromosome'].replace(
         #     self.genome_map)
 
+
+
+#PCA
+        
+
+def find_PCs(count_data, sampleData, num_pcs=2, num_genes=None, choose_by='variance'):
+    """
+    :param countData: each column is a sampleID, index is featureID
+    :param sampleData:
+    :param numPCs:
+    :param numGenes:
+    :return:
+    """
+    if num_genes:
+        # calculate var for each, pick numGenes top var across samples -> df
+        if choose_by == 'variance':
+            genes = count_data.var(axis=1).sort_values(ascending=False).head(num_genes).index
+            df = count_data.loc[genes].T
+        else:
+            pass
+            # todo implement log2fc selection
+    else:
+        df = count_data.T
+    pca = PCA(n_components=num_pcs)
+    principalComponents = pca.fit_transform(df)
+    pcs = [f'PC{i}' for i in range(1, num_pcs+1)]
+    pDf = (pd.DataFrame(data=principalComponents, columns=pcs)
+           .set_index(df.index))
+    pc_var = {pcs[i]: round(pca.explained_variance_ratio_[i] * 100, 2) for i in range(0, num_pcs)}
+    pDf2 = pDf.merge(sampleData, left_index=True, right_index=True)
+    return pDf2, pc_var
 
 
 #PLOTS

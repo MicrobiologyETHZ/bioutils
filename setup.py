@@ -6,15 +6,15 @@ requires = [
     ]
 
 setup(
-    name="bioinf_utils",
+    name="bioutils",
     version="1.0",
     author="Anna Sintsova",
     author_email="ansintsova@ethz.ch",
     description=("Bioinformatic toolkit for processing and analysing omic data"),
     license="LICENSE",
     #install_requires=requires,
-    packages=['bioinf_utils'],
+    packages=['bioutils'],
     entry_points={
-        'console_scripts': ['bioutils=bioinf_utils.main:main'],
+        'console_scripts': ['bioutils=bioutils.main:main'],
     }
 )
