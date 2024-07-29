@@ -158,7 +158,7 @@ class SaturationCurve:
                         .agg({'counts': [lambda x, c=c: (x > c).sum() for c in self.cutoffs]})
                         .reset_index())
         self.sat_curve_df.columns  = ['sample_id', 'depth'] + [f'>{c} reads' for c in self.cutoffs]
-        self.sat_curve_df = self.sat_curve_df.melt(id_vars=['sample_id', 'depth'], var_name=['cutoffs'], value_name = ['num_features'])
+        self.sat_curve_df = self.sat_curve_df.melt(id_vars=['sample_id', 'depth'], var_name='cutoffs', value_name = 'num_features')
 
 
     def plot_saturation_curve(self, sample_id: str):
@@ -166,6 +166,7 @@ class SaturationCurve:
             self.saturation_curves()
         fig = px.scatter(self.sat_curve_df[self.sat_curve_df.sample_id == sample_id].sort_values('depth'),
                          x = 'depth', y = 'num_features', color='cutoffs', height=600, width=800)
+        return fig
 
 
 

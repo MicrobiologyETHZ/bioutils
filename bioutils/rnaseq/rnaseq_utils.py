@@ -56,7 +56,7 @@ class GenomeAnnot:
     annotation_columns = ['Chromosome',  'Feature', 'Start', 'End', 'Strand', 'ID',
                           'Name', 'locus_tag', 'gene_biotype', 'product']
 
-    def __init__(self, gff_file, chr_names= pd.DataFrame()):
+    def __init__(self, gff_file, chr_names=pd.DataFrame()):
         self.gff_file = gff_file
         self.chr_names = chr_names
         self.feature = "gene"
