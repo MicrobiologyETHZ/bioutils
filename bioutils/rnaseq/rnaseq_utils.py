@@ -134,7 +134,8 @@ class SalmonCounts(CountDataSet):
 
 
 class FeatureCounts(CountDataSet):
-    count_col = None
+    count_col = 'fc_read_counts'
+    gene_col = 'ID'
 
     def load_count_files(self):
         files = list(self.data_dir.rglob("*.count.txt"))
@@ -144,12 +145,18 @@ class FeatureCounts(CountDataSet):
             name = f.stem.split(".count")[0]
             print(name)
             df = pd.read_table(f, comment='#').assign(sample_id=name)
-            df.columns = ['ID', 'chr', 'start', 'end',
-                          'strand', 'length', 'fc_read_counts', 'sample_id']
-            df = df[['ID', 'fc_read_counts', 'sample_id']]
+            df.columns = [self.gene_col, 'chr', 'start', 'end',
+                          'strand', 'length', self.count_col, 'sample_id']
+            df = df[['ID', 'length', self.count_col, 'sample_id']]
             df_list.append(df)
         self.count_data = pd.concat(df_list)
 
+    def calculate_tpms(self, log=True):
+        self.count_data['tpms'] = self.count_data[self.count_col]/self.count_data['length']*1000
+        self.count_data['tpms'] = self.count_data['tpms']/self.count_data.groupby('sample_id')['tpms'].transform('sum')*1e6
+        if log:
+            self.count_data['tpms'] = np.log2(self.count_data['tpms'] + 0.5)
+            
     @property
     def summary_df(self):
         """
