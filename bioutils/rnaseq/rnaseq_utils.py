@@ -6,6 +6,9 @@ import plotly.express as px
 import pyranges as pr
 import numpy as np
 from sklearn.decomposition import PCA
+import requests
+from time import sleep
+
 
 class GenomeAnnot:
     genome_map = {'CP015399.2': 'YL32',
@@ -67,7 +70,8 @@ class GenomeAnnot:
         return gff[gff['Feature'] == self.feature]
 
     def annotate_df(self, df):
-        chr_map = pd.DataFrame.from_dict(self.genome_map, orient='index').reset_index()
+        chr_map = pd.DataFrame.from_dict(
+            self.genome_map, orient='index').reset_index()
         chr_map.columns = ['Chromosome', 'genome']
         if not self.chr_names.empty:
             chr_map = pd.concat([chr_map, self.chr_names])
@@ -87,7 +91,6 @@ class CountDataSet:
 
 class DEResults:
     pass
-
 
 
 # Currently not looking at these
@@ -152,15 +155,17 @@ class FeatureCounts(CountDataSet):
         self.count_data = pd.concat(df_list)
 
     def calculate_tpms(self, log=True):
-        self.count_data['tpms'] = self.count_data[self.count_col]/self.count_data['length']*1000
-        self.count_data['tpms'] = self.count_data['tpms']/self.count_data.groupby('sample_id')['tpms'].transform('sum')*1e6
+        self.count_data['tpms'] = self.count_data[self.count_col] / \
+            self.count_data['length']*1000
+        self.count_data['tpms'] = self.count_data['tpms'] / \
+            self.count_data.groupby('sample_id')['tpms'].transform('sum')*1e6
         if log:
             self.count_data['tpms'] = np.log2(self.count_data['tpms'] + 0.5)
-            
+
     @property
     def summary_df(self):
         """
-        
+
         def read_featurcounts_summary(file):
             df = pd.read_table(file)
             df.columns = ['status', file.stem.split('.')[0]]
@@ -173,8 +178,8 @@ class FeatureCounts(CountDataSet):
             for file in files:
                 dfs.append(read_featurcounts_summary(file))
             return pd.concat(dfs)
-        
-        
+
+
         """
         files = list(self.data_dir.rglob("*.summary"))
         df_list = []
@@ -195,10 +200,11 @@ class FeatureCounts(CountDataSet):
                    .rename({'read_counts': 'no_feature'}, axis=1)
                    .merge(fdf[fdf.status == 'Unassigned_Ambiguity'][['read_counts', 'sample_id']], on='sample_id')
                    .rename({'read_counts': 'ambiguous'}, axis=1))
-        
+
         summary['percent_assigned'] = summary['assigned']/summary['total']*100
         summary['percent_unmapped'] = summary['unmapped']/summary['total']*100
-        summary['percent_ambiguous'] = summary['ambiguous']/summary['total']*100
+        summary['percent_ambiguous'] = summary['ambiguous'] / \
+            summary['total']*100
         summary['percent_no_feature'] = summary['no_feature'] / \
             summary['total']*100
         return summary
@@ -228,9 +234,8 @@ class SushiCounts(CountDataSet):
         #     self.genome_map)
 
 
+# PCA
 
-#PCA
-        
 
 def find_PCs(count_data, sampleData, num_pcs=2, num_genes=None, choose_by='variance'):
     """
@@ -243,7 +248,8 @@ def find_PCs(count_data, sampleData, num_pcs=2, num_genes=None, choose_by='varia
     if num_genes:
         # calculate var for each, pick numGenes top var across samples -> df
         if choose_by == 'variance':
-            genes = count_data.var(axis=1).sort_values(ascending=False).head(num_genes).index
+            genes = count_data.var(axis=1).sort_values(
+                ascending=False).head(num_genes).index
             df = count_data.loc[genes].T
         else:
             pass
@@ -255,20 +261,47 @@ def find_PCs(count_data, sampleData, num_pcs=2, num_genes=None, choose_by='varia
     pcs = [f'PC{i}' for i in range(1, num_pcs+1)]
     pDf = (pd.DataFrame(data=principalComponents, columns=pcs)
            .set_index(df.index))
-    pc_var = {pcs[i]: round(pca.explained_variance_ratio_[i] * 100, 2) for i in range(0, num_pcs)}
+    pc_var = {pcs[i]: round(pca.explained_variance_ratio_[i] * 100, 2)
+              for i in range(0, num_pcs)}
     pDf2 = pDf.merge(sampleData, left_index=True, right_index=True)
     return pDf2, pc_var
 
 
-#PLOTS
-def composition_plot(df, x_col='sample_id', y_col='proportion', color_col='genome', 
+# PLOTS
+def composition_plot(df, x_col='sample_id', y_col='proportion', color_col='genome',
                      genome_color_map={}, w=800, h=800):
-    fig = px.bar(df, x=x_col, 
-                 y=y_col, color=color_col, 
-                 color_discrete_map=genome_color_map, 
-                 template='plotly_white', 
-                 width=w, height=h, 
+    fig = px.bar(df, x=x_col,
+                 y=y_col, color=color_col,
+                 color_discrete_map=genome_color_map,
+                 template='plotly_white',
+                 width=w, height=h,
                  hover_data=df.columns,
-                 labels = {y_col: 'Transcriptome abundance', x_col:''})
+                 labels={y_col: 'Transcriptome abundance', x_col: ''})
 
     return fig
+
+
+def link_to_string(gene_names, species, method='get_link', output_format='tsv-no-header'):
+    common_species = {'yeast': 4932}
+    if type(species) == str:
+        try:
+            species = common_species[species]
+        except KeyError:
+            return f'{species} is undefined'
+    string_api_url = "https://version-12-0.string-db.org/api"
+    output_format = output_format
+    method = method
+    request_url = "/".join([string_api_url, output_format, method])
+    if len(gene_names) < 800:
+        params = {
+            "identifiers": "%0d".join(gene_names),  # your protein
+            "species": species,  # species NCBI identifier
+            "network_flavor": "confidence",  # show confidence links
+            "caller_identity": "explodata"  # your app name
+        }
+        network = requests.post(request_url, data=params)
+        network_url = network.text.strip()
+        sleep(0.5)
+    else:
+        return 'Oh No'
+    return network_url
