@@ -1,0 +1,97 @@
+# Literature Monitor Configuration File
+# Customize this file for your research area and preferences
+
+# Search terms - individual keywords to search for
+search_terms:
+  - microbiome
+  - microbial community
+  - metatranscriptomics
+  - bacterial growth
+  - bacterial metabolism
+
+# Combined searches - more complex queries with AND/OR logic
+combined_searches:
+  - bacterial AND gene AND expression
+  - microbiome AND transcriptomics
+  - microbiota AND growth
+
+# Important authors you want to follow (use "LastName Initial" format)
+important_authors:
+  - Knight R
+  - Segata N
+  - Huttenhower C
+  - Gilbert J
+  - Turnbaugh P
+
+# Important journals (will get scoring bonus)
+important_journals:
+  - Nature Microbiology
+  - Cell Host Microbe
+  - Microbiome
+  - ISME Journal
+  - mSystems
+  - PLoS Comput Biol
+
+# Top-tier journals (get highest scoring bonus)
+top_tier_journals:
+  - Nature
+  - Science
+  - Cell
+
+# Relevant biological systems you're interested in
+relevant_systems:
+  - soil microbiome
+  - marine microbiome
+  - gut microbiome
+  - plant microbiome
+  - oral microbiome
+
+# Computational/methodological keywords
+computational_keywords:
+  - machine learning
+  - deep learning
+  - network analysis
+  - modeling
+  - computational
+  - bioinformatics
+
+# Scoring weights - adjust these to emphasize what's important to you
+# Higher positive numbers = more important, negative = penalty
+scoring:
+  # PubMed scoring (published papers) - journal prestige matters here
+  pubmed:
+    system_relevance_title: 3      # System keywords in title
+    system_relevance_abstract: 2   # System keywords in abstract
+    computational_title: 2         # Computational keywords in title
+    computational_abstract: 1      # Computational keywords in abstract
+    top_tier_journal: 3           # Published in Nature/Science/Cell
+    important_journal: 2          # Published in field-specific journals
+    important_author: 1           # Paper by authors you follow
+    dataset_available: 1          # Data/code availability mentioned
+    review_penalty: -1            # Penalty for review papers
+    comprehensive_review_bonus: 1  # Bonus for systematic reviews
+
+  # bioRxiv scoring (preprints) - computational methods weighted higher
+  biorxiv:
+    system_relevance_title: 3      # System keywords in title
+    system_relevance_abstract: 2   # System keywords in abstract
+    computational_title: 3         # Computational keywords in title (higher than PubMed)
+    computational_abstract: 2      # Computational keywords in abstract
+    preprint_novelty_bonus: 1      # Bonus for being first-to-market
+    important_author: 2           # Higher weight since no journal signal
+    dataset_available: 2          # More important for preprints
+    review_penalty: -1            # Penalty for review papers
+    comprehensive_review_bonus: 1  # Bonus for systematic reviews
+
+# Default settings
+defaults:
+  days_back: 3                    # Days to look back (can be overridden with --days)
+  min_score: 3                    # Minimum score to include in results
+  result_limit: 100               # Maximum papers to fetch per search term
+  sources:                        # Which sources to search
+    - pubmed
+    - biorxiv
+
+# API keys for faster access
+api_keys:
+  ncbi_api_key: ""               # Add your NCBI API key here for faster PubMed searches
