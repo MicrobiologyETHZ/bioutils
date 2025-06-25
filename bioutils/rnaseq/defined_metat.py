@@ -400,6 +400,118 @@ class MetatranscriptomicProcessor:
         self.summary_stats = summary_pivot
         return summary_pivot
 
+    def load_count_file(self, count_file: Union[str, Path], 
+                       gene_id_col: str = 'Geneid',
+                       chr_col: Optional[str] = 'Chr',
+                       length_col: Optional[str] = 'Length',
+                       sep: str = '\t',
+                       metadata_file: Optional[Union[str, Path]] = None,
+                       sample_id_col: str = 'sample_id') -> pd.DataFrame:
+        """
+        Load a single pre-processed count file with multiple samples
+        
+        Args:
+            count_file: Path to count file (gene IDs as rows, samples as columns)
+            gene_id_col: Name of gene ID column (default: 'Geneid')  
+            chr_col: Name of chromosome column (optional, for strain mapping)
+            length_col: Name of length column (optional, for TPM calculation)
+            sep: File separator (default: tab)
+            metadata_file: Optional metadata file to merge with count data
+            sample_id_col: Column name in metadata file containing sample IDs that match count file column headers
+            
+        Returns:
+            DataFrame with loaded count data
+        """
+        count_file = Path(count_file)
+        
+        if not count_file.exists():
+            raise FileNotFoundError(f"Count file not found: {count_file}")
+            
+        print(f"Loading count file: {count_file}")
+        
+        # Read count file
+        df = pd.read_csv(count_file, sep=sep)
+        
+        # Validate required columns
+        if gene_id_col not in df.columns:
+            raise ValueError(f"Gene ID column '{gene_id_col}' not found in file")
+            
+        # Identify sample columns (numeric columns excluding metadata)
+        metadata_cols = [gene_id_col]
+        if chr_col and chr_col in df.columns:
+            metadata_cols.append(chr_col)
+        if length_col and length_col in df.columns:
+            metadata_cols.append(length_col)
+            
+        # Additional metadata columns (non-numeric)
+        other_cols = [col for col in df.columns 
+                     if col not in metadata_cols and df[col].dtype == 'object']
+        metadata_cols.extend(other_cols)
+        
+        sample_cols = [col for col in df.columns if col not in metadata_cols]
+        
+        print(f"Found {len(sample_cols)} sample columns: {sample_cols[:5]}{'...' if len(sample_cols) > 5 else ''}")
+        
+        # Add strain information if chromosome column exists
+        if chr_col and chr_col in df.columns:
+            df['strain'] = df[chr_col].apply(self.strain_mapper.get_strain)
+            
+        # Add gene annotation if available
+        if self.genome_annotation and gene_id_col in df.columns:
+            annotation_df = self.genome_annotation.annotation[['ID', 'Chromosome']].copy()
+            annotation_df = annotation_df.rename(columns={'ID': gene_id_col, 'Chromosome': chr_col})
+            df = df.merge(annotation_df, on=[gene_id_col, chr_col], how='left')
+            
+        # Load and merge metadata if provided
+        if metadata_file:
+            df = self._merge_metadata(df, metadata_file, sample_cols, sample_id_col)
+            
+        self.count_data = df
+        print(f"Loaded count data shape: {df.shape}")
+        return df
+        
+    def _merge_metadata(self, count_df: pd.DataFrame, metadata_file: Union[str, Path], 
+                       sample_cols: List[str], sample_id_col: str = 'sample_id') -> pd.DataFrame:
+        """
+        Merge count data with sample metadata
+        
+        Args:
+            count_df: Count data DataFrame
+            metadata_file: Path to metadata file
+            sample_cols: List of sample column names from count data
+            sample_id_col: Column name in metadata file containing sample IDs
+            
+        Returns:
+            DataFrame with count data (metadata stored separately)
+        """
+        metadata_path = Path(metadata_file)
+        
+        if not metadata_path.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+            
+        # Read metadata
+        if metadata_path.suffix.lower() == '.csv':
+            metadata = pd.read_csv(metadata_path)
+        else:
+            metadata = pd.read_csv(metadata_path, sep='\t')
+            
+        # Validate metadata has specified sample_id column
+        if sample_id_col not in metadata.columns:
+            raise ValueError(f"Metadata file must contain '{sample_id_col}' column")
+            
+        # Check which samples have metadata
+        samples_with_metadata = set(metadata[sample_id_col]) & set(sample_cols)
+        samples_missing_metadata = set(sample_cols) - set(metadata[sample_id_col])
+        
+        print(f"Found metadata for {len(samples_with_metadata)} of {len(sample_cols)} samples")
+        if samples_missing_metadata:
+            print(f"Missing metadata for: {list(samples_missing_metadata)[:5]}{'...' if len(samples_missing_metadata) > 5 else ''}")
+        
+        # Store metadata for later use
+        self.metadata = metadata
+        
+        return count_df
+
     def get_strain_summary(self) -> pd.DataFrame:
         """
         Generate summary statistics per strain
@@ -437,32 +549,135 @@ class MetatranscriptomicProcessor:
 
         return pd.DataFrame(strain_stats)
 
-    def calculate_tpm(self, pseudocount: float = 0.5) -> pd.DataFrame:
+    def calculate_tpm(self, pseudocount: float = 0.5, per_strain: bool = True, log_transform: bool = True) -> pd.DataFrame:
         """
         Calculate TPM (Transcripts Per Million) values
 
         Args:
             pseudocount: Value to add before log transformation
+            per_strain: If True and 'strain' column exists, calculate TPM per strain
+            log_transform: If True, also calculate log2-transformed TPM values
 
         Returns:
-            DataFrame with TPM values
+            DataFrame with original counts, TPM values, and optionally log2TPM values
         """
         if self.count_data.empty:
             raise ValueError("No count data available")
+            
+        if 'Length' not in self.count_data.columns:
+            raise ValueError("Length column required for TPM calculation")
 
         sample_cols = [col for col in self.count_data.columns
                        if col not in ['Geneid', 'Chr', 'Length', 'strain']]
 
         tpm_data = self.count_data.copy()
-
-        for sample in sample_cols:
-            # Calculate TPM: (reads / length_kb) / sum(reads / length_kb) * 1e6
-            rpk = tpm_data[sample] / (tpm_data['Length'] / 1000)
-            tpm_data[f'{sample}_tpm'] = rpk / rpk.sum() * 1e6
-            tpm_data[f'{sample}_log2tpm'] = np.log2(
-                tpm_data[f'{sample}_tpm'] + pseudocount)
+        
+        if per_strain and 'strain' in tpm_data.columns:
+            print("Calculating TPM per strain using efficient groupby operations")
+            for sample in sample_cols:
+                # Calculate RPK
+                rpk = tpm_data[sample] / (tpm_data['Length'] / 1000)
+                
+                # Calculate per-strain TPM using groupby transform
+                # This normalizes within each strain group
+                tpm_data[f'{sample}_tpm'] = (
+                    rpk.groupby(tpm_data['strain'])
+                    .transform(lambda x: x / x.sum() * 1e6)
+                )
+                
+                if log_transform:
+                    tpm_data[f'{sample}_log2tpm'] = np.log2(
+                        tpm_data[f'{sample}_tpm'] + pseudocount
+                    )
+        else:
+            print("Calculating TPM globally")
+            for sample in sample_cols:
+                # Calculate TPM globally: (reads / length_kb) / sum(reads / length_kb) * 1e6
+                rpk = tpm_data[sample] / (tpm_data['Length'] / 1000)
+                tpm_data[f'{sample}_tpm'] = rpk / rpk.sum() * 1e6
+                if log_transform:
+                    tpm_data[f'{sample}_log2tpm'] = np.log2(
+                        tpm_data[f'{sample}_tpm'] + pseudocount)
 
         return tpm_data
+
+    def calculate_clr(self, pseudocount: float = 0.5, per_strain: bool = True) -> pd.DataFrame:
+        """
+        Calculate CLR (Centered Log Ratio) normalization
+        
+        CLR transformation is commonly used in compositional data analysis.
+        For each sample, CLR = log(x_i / geometric_mean(x)) where x is the vector of all features
+        
+        Args:
+            pseudocount: Pseudocount to add before log transformation (default: 0.5)
+            per_strain: If True and 'strain' column exists, calculate CLR per strain
+            
+        Returns:
+            DataFrame with metadata columns and CLR-transformed values only
+        """
+        if self.count_data.empty:
+            raise ValueError("No count data available")
+            
+        sample_cols = [col for col in self.count_data.columns
+                       if col not in ['Geneid', 'Chr', 'Length', 'strain']]
+        
+        # Start with metadata columns only
+        metadata_cols = [col for col in self.count_data.columns if col not in sample_cols]
+        clr_data = self.count_data[metadata_cols].copy()
+        
+        if per_strain and 'strain' in self.count_data.columns:
+            print("Calculating CLR per strain using efficient groupby operations")
+            for sample in sample_cols:
+                # Add pseudocount
+                counts_pseudo = self.count_data[sample] + pseudocount
+                
+                # Calculate per-strain CLR using groupby transform
+                # Geometric mean calculated within each strain group
+                log_counts = np.log(counts_pseudo)
+                clr_data[f'{sample}_clr'] = (
+                    log_counts.groupby(self.count_data['strain'])
+                    .transform(lambda x: x - x.mean())
+                )
+        else:
+            print("Calculating CLR globally")
+            # Extract count data for transformation
+            counts_df = self.count_data[sample_cols]
+            
+            # Apply CLR transformation globally
+            clr_transformed = self._apply_clr(counts_df, pseudocount)
+            
+            # Add CLR columns to result
+            for sample in sample_cols:
+                clr_data[f'{sample}_clr'] = clr_transformed[sample]
+            
+        return clr_data
+        
+    def _apply_clr(self, df: pd.DataFrame, pseudocount: float = 0.5) -> pd.DataFrame:
+        """
+        Apply Centered Log-Ratio (CLR) transformation.
+        
+        CLR transformation is commonly used in compositional data analysis.
+        For each sample, CLR = log(x_i / geometric_mean(x)) where x is the vector of all features
+        
+        Args:
+            df: DataFrame with count data (genes x samples)
+            pseudocount: Small value added to handle zeros
+            
+        Returns:
+            CLR-transformed DataFrame
+        """
+        # Add pseudocount to handle zeros
+        df_pseudo = df + pseudocount
+        
+        # Calculate geometric mean for each sample (column)
+        # Geometric mean = exp(mean(log(x))) for each sample's features
+        log_data = np.log(df_pseudo)
+        geometric_means = np.exp(log_data.mean(axis=0))  # Mean across features (rows) for each sample
+        
+        # CLR = log(x_i / geometric_mean) = log(x_i) - log(geometric_mean)
+        clr_data = log_data.subtract(np.log(geometric_means), axis=1)
+        
+        return clr_data
 
     def get_composition_data(self, normalize: bool = True) -> pd.DataFrame:
         """
